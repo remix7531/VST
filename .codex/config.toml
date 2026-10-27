@@ -1,0 +1,11 @@
+[mcp_servers.rocq]
+# The Codex app-server does not inherit this checkout's dev shell, where rocq-mcp lives.
+command = "nix"
+args = ["develop", ".", "--command", "rocq-mcp"]
+startup_timeout_sec = 120
+tool_timeout_sec = 600
+required = true
+
+[mcp_servers.rocq.env]
+ROCQ_COQC_TIMEOUT = "300"
+ROCQ_PET_TIMEOUT = "120"
