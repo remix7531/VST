@@ -907,7 +907,7 @@ veric/version.v:  VERSION $(MSL_FILES:%=msl/%) $(SEPCOMP_FILES:%=sepcomp/%) $(VE
 floyd/proofauto.vo: veric/version.vo
 
 _CoqProject _CoqProject-export: Makefile util/coqflags $(COMPCERT_CONFIG)
-	echo $(COQFLAGS) > _CoqProject
+	printf '%s\n' $(COQFLAGS) | awk '/^-/ && NR > 1 { printf "\n" } { printf "%s ", $$0 } END { printf "\n" }' > _CoqProject
 	util/coqflags > _CoqProject-export
 
 floyd/floyd.coq: floyd/proofauto.vo
