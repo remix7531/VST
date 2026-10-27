@@ -1,0 +1,85 @@
+{
+  "nodes": {
+    "flake-parts": {
+      "inputs": {
+        "nixpkgs-lib": [
+          "rocq-mcp",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1782949081,
+        "narHash": "sha256-vp6Y/Grm98ESt6ceOkWiHWyZRDV3J1RID4w+6NWK9yA=",
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "rev": "17c9d6cdfc60c64f4ee8d306f9bc0b4ccb51481e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1787900134,
+        "narHash": "sha256-VYXO0XZlgj06dxJZRhrD3WoSsvq/c7+/Akyoa22pefw=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "83199d0d373dd3ac2b9a1996b1d0263f76ab7a4c",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "83199d0d373dd3ac2b9a1996b1d0263f76ab7a4c",
+        "type": "github"
+      }
+    },
+    "nixpkgs_2": {
+      "locked": {
+        "lastModified": 1785144949,
+        "narHash": "sha256-ZQuPncQIXswMWj0v6NFxiarHqrC7zC3voERxxbOWzQU=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "062612723c81a1a2e53d7385be6fa55314b9f44f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "pull/542647/head",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "rocq-mcp": {
+      "inputs": {
+        "flake-parts": "flake-parts",
+        "nixpkgs": "nixpkgs_2"
+      },
+      "locked": {
+        "lastModified": 1785244239,
+        "narHash": "sha256-y7tRyhTekd6NeewLEQ5Q+kqJEwmee+N6Dy0TOAtAHAE=",
+        "owner": "remix7531",
+        "repo": "rocq-mcp",
+        "rev": "46c7b0260b0b4d7c6facd71e087165280dd682ed",
+        "type": "github"
+      },
+      "original": {
+        "owner": "remix7531",
+        "repo": "rocq-mcp",
+        "rev": "46c7b0260b0b4d7c6facd71e087165280dd682ed",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "nixpkgs": "nixpkgs",
+        "rocq-mcp": "rocq-mcp"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
