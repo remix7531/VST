@@ -1025,6 +1025,26 @@ Defined.
 
 End inflate.
 
+(** Updating dry contents preserves the duplicable core of the resource
+    map. Extensionality separates levels, pointwise resources and ghost
+    state. Only value resources can change, and their cores forget the
+    stored memory value. *)
+Lemma core_inflate_store: forall m phi,
+  core (inflate_store m phi) = core phi.
+Proof.
+  intros m phi.
+  apply rmap_ext.
+  - rewrite !level_core.
+    unfold inflate_store; rewrite level_make_rmap; auto.
+  - intro loc.
+    rewrite <- !core_resource_at.
+    unfold inflate_store; rewrite resource_at_make_rmap.
+    case_eq (phi @ loc); intros; auto.
+    destruct k; simpl resource_fmap; repeat rewrite core_YES; auto.
+  - rewrite !ghost_of_core.
+    unfold inflate_store; rewrite ghost_of_make_rmap; auto.
+Qed.
+
 Lemma adr_inv0: forall (b b': block) (ofs ofs': Z) (sz: Z),
   ~ adr_range (b, ofs) sz (b', ofs') ->
   b <> b' \/ ~ ofs <= ofs' < ofs + sz.
@@ -1980,6 +2000,68 @@ assert (H: p = NoneP).
   destruct  (juicy_mem_contents jm _ _ _ _ _ HeqHPHI); auto.
 rewrite H in HeqHPHI; clear H.
 rewrite HeqHPHI; auto.
+Qed.
+
+(** A successful dry byte store lifts to resource nondecay when every
+    written address has writable permission in the juicy map. Inside
+    the span, coherence forces a value resource with a writable share.
+    Outside it, the store preserves contents and all other resources. *)
+Lemma juicy_storebytes_nodecay:
+  forall jm m' b ofs bytes
+       (STORE: storebytes (m_dry jm) b ofs bytes = Some m')
+       (PERM: forall z, ofs <= z < ofs + Zlength bytes ->
+         perm_order'' (perm_of_res (m_phi jm @ (b,z))) (Some Writable)),
+  resource_nodecay (nextblock (m_dry jm)) (m_phi jm)
+    (m_phi (storebytes_juicy_mem jm m' b ofs bytes STORE)).
+Proof.
+  intros jm m' b ofs bytes STORE PERM.
+  split.
+  - simpl.
+    unfold inflate_store.
+    rewrite level_make_rmap; auto.
+  - intro loc.
+    split.
+    { apply juicy_mem_alloc_cohere. }
+
+    destruct (adr_range_dec (b, ofs) (Zlength bytes) loc)
+      as [INSIDE | OUTSIDE].
+    + (* Written addresses retain their share and value-resource kind. *)
+      right.
+      destruct loc as [b' z].
+      destruct INSIDE as [BLOCK RANGE].
+      subst b'.
+      specialize (PERM z RANGE).
+      destruct (m_phi jm @ (b, z)) eqn:RESOURCE;
+        try destruct k; simpl in PERM; try if_tac in PERM; try inv PERM.
+      destruct (juicy_mem_contents _ _ _ _ _ _ RESOURCE); subst.
+      assert (writable0_share sh) as WRITABLE.
+      { clear - PERM.
+        unfold perm_of_sh in PERM.
+        if_tac in PERM; auto.
+        if_tac in PERM.
+        { inv PERM. }
+        if_tac in PERM; inv PERM. }
+      exists sh, WRITABLE.
+      do 2 econstructor.
+      split; simpl; f_equal.
+      { apply proof_irr. }
+      unfold inflate_store.
+      rewrite resource_at_make_rmap.
+      rewrite RESOURCE; f_equal; apply proof_irr.
+    + (* Unwritten value contents agree with the original dry memory. *)
+      left.
+      simpl.
+      unfold inflate_store.
+      rewrite level_make_rmap, resource_at_make_rmap.
+      destruct loc as [b' z].
+      remember (m_phi jm @ (b', z)) as resource.
+      destruct resource; try destruct k; auto;
+        try solve [rewrite Heqresource; rewrite resource_at_approx; auto].
+      assert (p = NoneP) as PREDICATE.
+      { symmetry in Heqresource.
+        destruct (juicy_mem_contents jm _ _ _ _ _ Heqresource); auto. }
+      subst p.
+      rewrite (storebytes_phi_elsewhere_eq jm _ _ _ _ STORE _ r m (b', z)); auto.
 Qed.
 
 Lemma inflate_free_resource_decay:
