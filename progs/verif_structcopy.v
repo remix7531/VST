@@ -23,5 +23,10 @@ Definition Gprog : funspecs :=   ltac:(with_library prog [f_spec ]).
 
 Lemma body_f:  semax_body Vprog Gprog f_f f_spec.
 Proof.
-Fail  start_function.
-Abort.
+  start_function.
+  forward.
+  forward.
+  forward.
+  forward.
+  entailer!.
+Qed.

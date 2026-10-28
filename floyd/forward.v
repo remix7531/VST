@@ -1,3 +1,4 @@
+From Ltac2 Require Import Ltac2.
 Require Import VST.floyd.base2.
 Require Import VST.floyd.client_lemmas.
 Require Import VST.floyd.go_lower.
@@ -31,11 +32,16 @@ Require Import VST.floyd.diagnosis.
 Require Import VST.floyd.simpl_reptype.
 Require Import VST.floyd.nested_pred_lemmas.
 Require Import VST.floyd.freezer.
+Require Import VST.floyd.copy_forward.
+Require Import VST.floyd.copy_field_forward.
+Require Import VST.floyd.copy_bytes.
+Require Import VST.floyd.bitfield_forward.
 Import Cop.
 Import Cop2.
 Import Clight_Cop2.
 Import LiftNotation.
 Import compcert.lib.Maps.
+Set Default Proof Mode "Classic".
 
 Global Opaque denote_tc_test_eq.
 Global Transparent intsize_eq signedness_eq attr_eq floatsize_eq type_eq typelist_eq calling_convention_eq.
@@ -3397,10 +3403,55 @@ match goal with |- context [@proj_reptype ?cs ?t ?gfs ?v] =>
 end.
 
 
-Ltac store_tac :=
-ensure_open_normal_ret_assert;
-hoist_later_in_pre;
-sc_set_load_store.store_tac.
+Module StoreForward.
+
+(** Try whole object ownership, enclosing field ownership, then explicit
+    byte ownership for an aggregate assignment. Each native entry point
+    must establish the required shares, compatible types, and alignment,
+    using address equality for self-copy or separated copy ownership. *)
+Ltac2 aggregate () :=
+  Control.once (fun () =>
+    Control.plus
+      (fun () => CopyForward.run ())
+      (fun _ =>
+        Control.plus
+          (fun () => CopyFieldForward.run ())
+          (fun _ => CopyBytesForward.run ()))).
+
+(** Prefer the native bitfield store path, then dispatch structure and
+    union destinations to aggregate copy. Other destinations retain the
+    scalar store rules. Failure of an aggregate ownership proof fails
+    the aggregate assignment. *)
+Ltac2 dispatch (destination : constr) :=
+  Control.once (fun () =>
+    Control.plus
+      (fun () => BitfieldStore.run ())
+      (fun _ =>
+        let destination_type := Std.eval_hnf constr:(typeof $destination) in
+        lazy_match! destination_type with
+        | Tstruct _ _ => aggregate ()
+        | Tunion _ _ => aggregate ()
+        | _ => ltac1:(sc_set_load_store.store_tac)
+        end)).
+
+(** Forward one assignment after opening its normal return assertion and
+    hoisting the later precondition. Reject goals that are not assignment
+    statements, then use the destination type to select the store rules. *)
+Ltac2 run () :=
+  Control.enter (fun () =>
+    ltac1:(ensure_open_normal_ret_assert);
+    ltac1:(hoist_later_in_pre);
+    lazy_match! goal with
+    | [ |- @semax _ _ _ _ (Sassign ?destination _) _ ] =>
+        dispatch destination
+    | [ |- _ ] =>
+        Control.zero (Tactic_failure (Some
+          (Message.of_string "Store dispatch expected an assignment goal")))
+    end).
+
+End StoreForward.
+
+Ltac store_tac := ltac2:(StoreForward.run ()).
 
 (* END new semax_load and semax_store tactics *************************)
 
@@ -3988,6 +4039,7 @@ Ltac fwd_result :=
     end);
   unfold replace_nth, repinject; cbv beta iota zeta;
   repeat simpl_proj_reptype;
+  ltac2:(Control.enter CopyFieldValues.simplify_updates);
   simplify_new_temp.
 
 Ltac check_precondition :=
@@ -4287,7 +4339,18 @@ end.
 
 Fixpoint check_norm_stmt (s: statement) : diagnose_expr :=
 match s with
-| Sassign e1 e2 => DE_compose (check_norm_lvalue e1) (check_norm_expr e2)
+| Sassign e1 e2 =>
+    match typeof e1 with
+    | Tstruct _ _ | Tunion _ _ =>
+        if copy_type_compatible (typeof e1) (typeof e2) then
+          match e2 with
+          | Evar _ _ | Ederef _ _ | Efield _ _ _ =>
+              DE_compose (check_norm_lvalue e1) (check_norm_lvalue e2)
+          | _ => DE_compose (check_norm_lvalue e1) (check_norm_expr e2)
+          end
+        else DE_compose (check_norm_lvalue e1) (check_norm_expr e2)
+    | _ => DE_compose (check_norm_lvalue e1) (check_norm_expr e2)
+    end
 | Sset _ e1 => check_norm_lvalue e1
 | Scall _ (Evar _ _) el => fold_right DE_compose DE_OK (map check_norm_expr el)
 | Scall _ e el => fold_right DE_compose DE_OK (map check_norm_expr (e::el))
@@ -4804,6 +4867,40 @@ Ltac make_compspecs prog :=
     end;
   let cenv := make_composite_env0 prog in
   make_compspecs_cenv cenv.
+
+Module ByteCopyCompspecs.
+(** Build [compspecs] from a [Clight.program] for byte-backed aggregate
+    reasoning, including composites with bitfields. This entry point
+    omits the blanket bitfield rejection in [make_compspecs] and retains
+    all composite environment invariant proofs. It fails if the input
+    has another type or those invariants cannot be established. *)
+Ltac2 run (program : constr) :=
+  let actual_type := Constr.type program in
+  if Constr.equal (Std.eval_hnf actual_type)
+       (Std.eval_hnf constr:(Clight.program)) then ()
+  else
+    Control.throw (Invalid_argument (Some
+      (Message.concat
+        (Message.of_string "Expected a Clight.program for byte-copy compspecs, got ")
+        (Message.of_constr actual_type))));
+  Ltac1.apply
+    (Ltac1.ref [@VST; @floyd; @forward; @make_composite_env0])
+    [Ltac1.of_constr program]
+    (fun result =>
+      match Ltac1.to_constr result with
+      | Some environment =>
+          Control.once_plus
+            (fun () =>
+              ltac1:(environment |- make_compspecs_cenv environment)
+                (Ltac1.of_constr environment))
+            (fun _ => Control.zero (Tactic_failure (Some
+              (Message.of_string
+                "Byte-copy compspecs require all existing composite environment invariants"))))
+      | None =>
+          Control.throw (Invalid_argument (Some
+            (Message.of_string "make_composite_env0 did not return a Coq term")))
+      end).
+End ByteCopyCompspecs.
 
 Fixpoint missing_ids {A} (t: PTree.tree A) (al: list ident) :=
   match al with
