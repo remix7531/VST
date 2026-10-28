@@ -1,0 +1,504 @@
+Require Import VST.floyd.proofauto.
+Require Import VST.progs.unioncopy.
+
+#[export] Instance CompSpecs : compspecs. make_compspecs prog. Defined.
+Definition Vprog : varspecs. mk_varspecs prog. Defined.
+
+Definition tchoice := Tunion _choice noattr.
+Definition tpadded_choice := Tunion _padded_choice noattr.
+Definition tnested_choice := Tunion _nested_choice noattr.
+Definition tunion_fields := Tstruct _union_fields noattr.
+Definition tunion_array := Tstruct _union_array noattr.
+Definition tunion_pair := Tstruct _union_pair noattr.
+Definition tpair_choice := Tunion _pair_choice noattr.
+
+Ltac check_union_copy_spatial_order expected :=
+  rewrite ?copy_rules.copy_reptype_refl,
+    ?copy_rules.copy_reptype_struct, ?copy_rules.copy_reptype_union;
+  lazymatch goal with
+  | |- ENTAIL _, ?pre |-- _ =>
+      lazymatch pre with
+      | context [SEPx ?actual] => unify actual expected
+      end
+  end.
+
+Definition copy_choice_spec :=
+ DECLARE _copy_choice
+ WITH destination: val, source: val, value: reptype tchoice,
+      destination_share: share, source_share: share
+ PRE [tptr tchoice, tptr tchoice]
+   PROP (writable_share destination_share; readable_share source_share)
+   PARAMS (destination; source)
+   SEP (data_at_ destination_share tchoice destination;
+        data_at source_share tchoice value source)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (data_at destination_share tchoice value destination;
+        data_at source_share tchoice value source).
+
+Definition copy_choice_integer_spec :=
+ DECLARE _copy_choice
+ WITH destination: val, source: val, integer: Z
+ PRE [tptr tchoice, tptr tchoice]
+   PROP () PARAMS (destination; source)
+   SEP (data_at_ Ews tchoice destination;
+        data_at Ers tchoice (inl (Vint (Int.repr integer))) source)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (data_at Ews tchoice (inl (Vint (Int.repr integer))) destination;
+        data_at Ers tchoice (inl (Vint (Int.repr integer))) source).
+
+Definition copy_choice_pointer_spec :=
+ DECLARE _copy_choice
+ WITH destination: val, source: val, block: block, offset: ptrofs
+ PRE [tptr tchoice, tptr tchoice]
+   PROP () PARAMS (destination; source)
+   SEP (data_at_ Ews tchoice destination;
+        data_at Ers tchoice (inr (Vptr block offset)) source)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (data_at Ews tchoice (inr (Vptr block offset)) destination;
+        data_at Ers tchoice (inr (Vptr block offset)) source).
+
+Definition copy_padded_choice_spec :=
+ DECLARE _copy_padded_choice
+ WITH destination: val, source: val, tag: Z
+ PRE [tptr tpadded_choice, tptr tpadded_choice]
+   PROP (0 <= tag <= Byte.max_unsigned) PARAMS (destination; source)
+   SEP (data_at_ Ews tpadded_choice destination;
+        data_at Ers tpadded_choice (inl (Vint (Int.repr tag))) source)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (data_at Ews tpadded_choice (inl (Vint (Int.repr tag))) destination;
+        data_at Ers tpadded_choice (inl (Vint (Int.repr tag))) source).
+
+Definition copy_padded_choice_full_spec :=
+ DECLARE _copy_padded_choice
+ WITH destination: val, source: val, integer: Z
+ PRE [tptr tpadded_choice, tptr tpadded_choice]
+   PROP () PARAMS (destination; source)
+   SEP (data_at_ Ews tpadded_choice destination;
+        data_at Ers tpadded_choice (inr (Vint (Int.repr integer))) source)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (data_at Ews tpadded_choice (inr (Vint (Int.repr integer))) destination;
+        data_at Ers tpadded_choice (inr (Vint (Int.repr integer))) source).
+
+Definition copy_nested_choice_spec :=
+ DECLARE _copy_nested_choice
+ WITH destination: val, source: val, value: reptype tnested_choice
+ PRE [tptr tnested_choice, tptr tnested_choice]
+   PROP () PARAMS (destination; source)
+   SEP (data_at_ Ews tnested_choice destination;
+        data_at Ers tnested_choice value source)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (data_at Ews tnested_choice value destination;
+        data_at Ers tnested_choice value source).
+
+Definition copy_nested_choice_pointer_spec :=
+ DECLARE _copy_nested_choice
+ WITH destination: val, source: val, block: block, offset: ptrofs
+ PRE [tptr tnested_choice, tptr tnested_choice]
+   PROP () PARAMS (destination; source)
+   SEP (data_at_ Ews tnested_choice destination;
+        data_at Ers tnested_choice (inl (inr (Vptr block offset))) source)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (data_at Ews tnested_choice (inl (inr (Vptr block offset))) destination;
+        data_at Ers tnested_choice (inl (inr (Vptr block offset))) source).
+
+Definition copy_union_fields_whole_spec :=
+ DECLARE _copy_union_fields_whole
+ WITH destination: val, source: val, first: reptype tchoice, second: reptype tchoice
+ PRE [tptr tunion_fields, tptr tunion_fields]
+   PROP () PARAMS (destination; source)
+   SEP (data_at_ Ews tunion_fields destination;
+        data_at Ers tunion_fields (first, second) source)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (data_at Ews tunion_fields (first, second) destination;
+        data_at Ers tunion_fields (first, second) source).
+
+Definition copy_union_array_whole_spec :=
+ DECLARE _copy_union_array_whole
+ WITH destination: val, source: val, first: reptype tchoice, second: reptype tchoice
+ PRE [tptr tunion_array, tptr tunion_array]
+   PROP () PARAMS (destination; source)
+   SEP (data_at_ Ews tunion_array destination;
+        data_at Ers tunion_array [first; second] source)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (data_at Ews tunion_array [first; second] destination;
+        data_at Ers tunion_array [first; second] source).
+
+Definition copy_choice_self_spec :=
+ DECLARE _copy_choice_self
+ WITH object: val, value: reptype tchoice
+ PRE [tptr tchoice]
+   PROP () PARAMS (object)
+   SEP (data_at Ews tchoice value object)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (data_at Ews tchoice value object).
+
+Definition copy_union_fields_spec :=
+ DECLARE _copy_union_fields
+ WITH destination: val, source: val,
+      first: reptype tchoice, second: reptype tchoice,
+      source_first: reptype tchoice, source_second: reptype tchoice
+ PRE [tptr tunion_fields, tptr tunion_fields]
+   PROP () PARAMS (destination; source)
+   SEP (data_at Ews tunion_fields (first, second) destination;
+        data_at Ers tunion_fields (source_first, source_second) source)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (data_at Ews tunion_fields (source_second, second) destination;
+        data_at Ers tunion_fields (source_first, source_second) source).
+
+Definition copy_union_siblings_spec :=
+ DECLARE _copy_union_siblings
+ WITH object: val, first: reptype tchoice, second: reptype tchoice
+ PRE [tptr tunion_fields]
+   PROP () PARAMS (object)
+   SEP (data_at Ews tunion_fields (first, second) object)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (data_at Ews tunion_fields (second, second) object).
+
+Definition copy_union_field_self_spec :=
+ DECLARE _copy_union_field_self
+ WITH object: val, first: reptype tchoice, second: reptype tchoice
+ PRE [tptr tunion_fields]
+   PROP () PARAMS (object)
+   SEP (data_at Ews tunion_fields (first, second) object)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (data_at Ews tunion_fields (first, second) object).
+
+Definition copy_union_array_fields_spec :=
+ DECLARE _copy_union_array_fields
+ WITH destination: val, source: val,
+      first: reptype tchoice, second: reptype tchoice,
+      source_first: reptype tchoice, source_second: reptype tchoice
+ PRE [tptr tunion_array, tptr tunion_array]
+   PROP () PARAMS (destination; source)
+   SEP (data_at Ews tunion_array [first; second] destination;
+        data_at Ers tunion_array [source_first; source_second] source)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (data_at Ews tunion_array [source_second; second] destination;
+        data_at Ers tunion_array [source_first; source_second] source).
+
+Definition copy_union_pair_spec :=
+ DECLARE _copy_union_pair
+ WITH destination: val, source: val, old_integer: Z,
+      first: val, second: val
+ PRE [tptr tpair_choice, tptr tpair_choice]
+   PROP () PARAMS (destination; source)
+   SEP (data_at Ews tpair_choice (inr (Vint (Int.repr old_integer))) destination;
+        data_at Ers tpair_choice (inl (first, second)) source)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (data_at Ews tpair_choice (inl (first, second)) destination;
+        data_at Ers tpair_choice (inl (first, second)) source).
+
+Definition copy_union_pair_inactive_spec :=
+ DECLARE _copy_union_pair
+ WITH destination: val, source: val
+ PRE [tptr tpair_choice, tptr tpair_choice]
+   PROP () PARAMS (destination; source)
+   SEP (data_at Ews tpair_choice (inr (Vint Int.zero)) destination;
+        data_at Ers tpair_choice (inr (Vint Int.one)) source)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (data_at Ews tpair_choice (inl (Vint Int.zero, Vint Int.zero)) destination;
+        data_at Ers tpair_choice (inr (Vint Int.one)) source).
+
+Definition Gprog : funspecs := ltac:(with_library prog
+  [copy_choice_spec; copy_padded_choice_spec; copy_nested_choice_spec;
+   copy_union_fields_whole_spec; copy_union_array_whole_spec;
+   copy_choice_self_spec; copy_union_fields_spec; copy_union_siblings_spec;
+   copy_union_field_self_spec; copy_union_array_fields_spec; copy_union_pair_spec]).
+
+Lemma body_copy_choice: semax_body Vprog Gprog f_copy_choice copy_choice_spec.
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_choice_integer:
+  semax_body Vprog Gprog f_copy_choice copy_choice_integer_spec.
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_choice_pointer:
+  semax_body Vprog Gprog f_copy_choice copy_choice_pointer_spec.
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_padded_choice:
+  semax_body Vprog Gprog f_copy_padded_choice copy_padded_choice_spec.
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_padded_choice_full:
+  semax_body Vprog Gprog f_copy_padded_choice copy_padded_choice_full_spec.
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_nested_choice:
+  semax_body Vprog Gprog f_copy_nested_choice copy_nested_choice_spec.
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_nested_choice_pointer:
+  semax_body Vprog Gprog f_copy_nested_choice copy_nested_choice_pointer_spec.
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_union_fields_whole:
+  semax_body Vprog Gprog f_copy_union_fields_whole copy_union_fields_whole_spec.
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_union_array_whole:
+  semax_body Vprog Gprog f_copy_union_array_whole copy_union_array_whole_spec.
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_choice_self:
+  semax_body Vprog Gprog f_copy_choice_self copy_choice_self_spec.
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_union_fields:
+  semax_body Vprog Gprog f_copy_union_fields copy_union_fields_spec.
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_union_siblings:
+  semax_body Vprog Gprog f_copy_union_siblings copy_union_siblings_spec.
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_union_field_self:
+  semax_body Vprog Gprog f_copy_union_field_self copy_union_field_self_spec.
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_union_array_fields:
+  semax_body Vprog Gprog f_copy_union_array_fields copy_union_array_fields_spec.
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_union_pair:
+  semax_body Vprog Gprog f_copy_union_pair copy_union_pair_spec.
+Proof. start_function. forward. entailer!. Qed.
+
+Goal semax_body Vprog Gprog f_copy_union_pair copy_union_pair_inactive_spec.
+Proof. start_function. Fail forward. Abort.
+
+Definition f_copy_choice_attributes (destination_attributes source_attributes: attr) := {|
+  fn_return := tvoid;
+  fn_callconv := cc_default;
+  fn_params := [(_destination, tptr (Tunion _choice destination_attributes));
+                (_source, tptr (Tunion _choice source_attributes))];
+  fn_vars := nil;
+  fn_temps := nil;
+  fn_body := Sassign
+    (Ederef (Etempvar _destination (tptr (Tunion _choice destination_attributes)))
+      (Tunion _choice destination_attributes))
+    (Ederef (Etempvar _source (tptr (Tunion _choice source_attributes)))
+      (Tunion _choice source_attributes))
+|}.
+
+Definition copy_choice_attributes_spec
+    (destination_attributes source_attributes
+      destination_owned_attributes source_owned_attributes: attr) :=
+ DECLARE _copy_choice
+ WITH destination: val, source: val, value: reptype tchoice
+ PRE [tptr (Tunion _choice destination_attributes),
+      tptr (Tunion _choice source_attributes)]
+   PROP () PARAMS (destination; source)
+   SEP (data_at_ Ews (Tunion _choice destination_owned_attributes) destination;
+        data_at Ers (Tunion _choice source_owned_attributes) value source)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (data_at Ews (Tunion _choice destination_owned_attributes) value destination;
+        data_at Ers (Tunion _choice source_owned_attributes) value source).
+
+Definition volatile_choice_attributes := attr_of_type (tvolatile tchoice).
+
+Lemma copy_different_unions_rejected:
+  copy_type_compatible tchoice tpadded_choice = false.
+Proof. reflexivity. Qed.
+
+Lemma body_copy_choice_qualified_source_ownership:
+  semax_body Vprog Gprog f_copy_choice
+    (copy_choice_attributes_spec noattr noattr noattr volatile_choice_attributes).
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_choice_qualified_destination_ownership:
+  semax_body Vprog Gprog f_copy_choice
+    (copy_choice_attributes_spec noattr noattr volatile_choice_attributes noattr).
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_choice_both_qualified_ownership:
+  semax_body Vprog Gprog f_copy_choice
+    (copy_choice_attributes_spec noattr noattr
+      volatile_choice_attributes volatile_choice_attributes).
+Proof.
+  start_function. forward.
+  check_union_copy_spatial_order
+    [data_at Ews (Tunion _choice volatile_choice_attributes) value destination;
+     data_at Ers (Tunion _choice volatile_choice_attributes) value source].
+  entailer!.
+Qed.
+
+Lemma body_copy_choice_qualified_source_expression:
+  semax_body Vprog Gprog (f_copy_choice_attributes noattr volatile_choice_attributes)
+    (copy_choice_attributes_spec noattr volatile_choice_attributes
+      noattr volatile_choice_attributes).
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_choice_qualified_destination_expression:
+  semax_body Vprog Gprog (f_copy_choice_attributes volatile_choice_attributes noattr)
+    (copy_choice_attributes_spec volatile_choice_attributes noattr
+      volatile_choice_attributes noattr).
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_choice_both_qualified_expressions:
+  semax_body Vprog Gprog
+    (f_copy_choice_attributes volatile_choice_attributes volatile_choice_attributes)
+    (copy_choice_attributes_spec volatile_choice_attributes volatile_choice_attributes
+      volatile_choice_attributes volatile_choice_attributes).
+Proof. start_function. forward. entailer!. Qed.
+
+Definition copy_choice_qualified_empty_fields_spec
+    (destination_attributes source_attributes: attr) :=
+ DECLARE _copy_choice
+ WITH destination: val, source: val, value: reptype tchoice
+ PRE [tptr tchoice, tptr tchoice]
+   PROP () PARAMS (destination; source)
+   SEP (field_at_ Ews (Tunion _choice destination_attributes) [] destination;
+        field_at Ers (Tunion _choice source_attributes) [] value source)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (field_at Ews (Tunion _choice destination_attributes) [] value destination;
+        field_at Ers (Tunion _choice source_attributes) [] value source).
+
+Lemma body_copy_choice_qualified_empty_source_field:
+  semax_body Vprog Gprog f_copy_choice
+    (copy_choice_qualified_empty_fields_spec noattr volatile_choice_attributes).
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_choice_qualified_empty_destination_field:
+  semax_body Vprog Gprog f_copy_choice
+    (copy_choice_qualified_empty_fields_spec volatile_choice_attributes noattr).
+Proof. start_function. forward. entailer!. Qed.
+
+Lemma body_copy_choice_both_qualified_empty_fields:
+  semax_body Vprog Gprog f_copy_choice
+    (copy_choice_qualified_empty_fields_spec
+      volatile_choice_attributes volatile_choice_attributes).
+Proof.
+  start_function. forward.
+  check_union_copy_spatial_order
+    [field_at Ews (Tunion _choice volatile_choice_attributes) [] value destination;
+     field_at Ers (Tunion _choice volatile_choice_attributes) [] value source].
+  entailer!.
+Qed.
+
+Definition copy_native_union_fields_spec :=
+ DECLARE _copy_union_fields
+ WITH destination: val, source: val, old: reptype tchoice,
+      value: reptype tchoice, sibling: reptype tchoice
+ PRE [tptr tunion_fields, tptr tunion_fields]
+   PROP () PARAMS (destination; source)
+   SEP (field_at Ews tunion_fields [StructField _second] sibling destination;
+        field_at Ers tunion_fields [StructField _second] value source;
+        field_at Ews tunion_fields [StructField _first] old destination)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (field_at Ews tunion_fields [StructField _second] sibling destination;
+        field_at Ers tunion_fields [StructField _second] value source;
+        field_at Ews tunion_fields [StructField _first] value destination).
+
+Lemma body_copy_native_union_fields:
+  semax_body Vprog Gprog f_copy_union_fields copy_native_union_fields_spec.
+Proof.
+  start_function. forward.
+  check_union_copy_spatial_order
+    [field_at Ews tunion_fields [StructField _second] sibling destination;
+     field_at Ers tunion_fields [StructField _second] value source;
+     field_at Ews tunion_fields [StructField _first] value destination].
+  entailer!.
+Qed.
+
+Definition copy_native_union_uninitialized_field_spec :=
+ DECLARE _copy_union_fields
+ WITH destination: val, source: val, value: reptype tchoice
+ PRE [tptr tunion_fields, tptr tunion_fields]
+   PROP () PARAMS (destination; source)
+   SEP (field_at_ Ews tunion_fields [StructField _first] destination;
+        field_at Ers tunion_fields [StructField _second] value source)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (field_at Ews tunion_fields [StructField _first] value destination;
+        field_at Ers tunion_fields [StructField _second] value source).
+
+Lemma body_copy_native_union_uninitialized_field:
+  semax_body Vprog Gprog f_copy_union_fields copy_native_union_uninitialized_field_spec.
+Proof. start_function. forward. entailer!. Qed.
+
+Definition copy_native_union_siblings_spec :=
+ DECLARE _copy_union_siblings
+ WITH object: val, first: reptype tchoice, second: reptype tchoice
+ PRE [tptr tunion_fields]
+   PROP () PARAMS (object)
+   SEP (field_at Ers tunion_fields [StructField _second] second object;
+        field_at Ews tunion_fields [StructField _first] first object)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (field_at Ers tunion_fields [StructField _second] second object;
+        field_at Ews tunion_fields [StructField _first] second object).
+
+Lemma body_copy_native_union_siblings:
+  semax_body Vprog Gprog f_copy_union_siblings copy_native_union_siblings_spec.
+Proof. start_function. forward. entailer!. Qed.
+
+Definition copy_native_union_field_self_spec :=
+ DECLARE _copy_union_field_self
+ WITH object: val, value: reptype tchoice
+ PRE [tptr tunion_fields]
+   PROP () PARAMS (object)
+   SEP (field_at Ews tunion_fields [StructField _first] value object)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (field_at Ews tunion_fields [StructField _first] value object).
+
+Lemma body_copy_native_union_field_self:
+  semax_body Vprog Gprog f_copy_union_field_self copy_native_union_field_self_spec.
+Proof. start_function. forward. entailer!. Qed.
+
+Definition copy_owned_union_array_fields_spec :=
+ DECLARE _copy_union_array_fields
+ WITH destination: val, source: val,
+      first: reptype tchoice, second: reptype tchoice,
+      source_first: reptype tchoice, source_second: reptype tchoice
+ PRE [tptr tunion_array, tptr tunion_array]
+   PROP () PARAMS (destination; source)
+   SEP (field_at Ews tunion_array [StructField _values] [first; second] destination;
+        field_at Ers tunion_array [StructField _values]
+          [source_first; source_second] source)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (field_at Ews tunion_array [StructField _values]
+          [source_second; second] destination;
+        field_at Ers tunion_array [StructField _values]
+          [source_first; source_second] source).
+
+Lemma body_copy_owned_union_array_fields:
+  semax_body Vprog Gprog f_copy_union_array_fields copy_owned_union_array_fields_spec.
+Proof. start_function. forward. entailer!. Qed.
+
+Definition copy_native_union_member_spec :=
+ DECLARE _copy_union_pair
+ WITH destination: val, source: val, first: val, second: val
+ PRE [tptr tpair_choice, tptr tpair_choice]
+   PROP () PARAMS (destination; source)
+   SEP (field_at_ Ews tpair_choice [UnionField _pair] destination;
+        field_at Ers tpair_choice [UnionField _pair] (first, second) source)
+ POST [tvoid]
+   PROP () RETURN ()
+   SEP (field_at Ews tpair_choice [UnionField _pair] (first, second) destination;
+        field_at Ers tpair_choice [UnionField _pair] (first, second) source).
+
+Lemma body_copy_native_union_member:
+  semax_body Vprog Gprog f_copy_union_pair copy_native_union_member_spec.
+Proof. start_function. forward. entailer!. Qed.
