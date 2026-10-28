@@ -236,8 +236,8 @@ Verifiable C is a \emph{program logic} (higher-order impredicative concurrent se
 \begin{itemize}
   \item No casting between integers and pointers.
   \item No \lstinline{goto} statements.
-  \item No bitfields in structs.
-  \item No \lstinline{struct}-copying assignments, \lstinline{struct} parameters, or \lstinline{struct} returns.
+  \item No direct bitfield loads.
+  \item No \lstinline{struct} parameters or \lstinline{struct} returns.
   \item Only structured \lstinline{switch} statements (no Duff's device).
   \item No varargs functions, except limited undocumented support for calling printf and fprintf.
 \end{itemize}
@@ -246,8 +246,53 @@ The Verifiable C program logic operates on the CompCert \emph{Clight}
 language.  CompCert's \lstinline{clightgen} tool (described in the
 next chapter) translates C into C light, so that you can use VST
 to apply the program logic to the program.  Clight (and clightgen) does support
-some of the features listed above (such as goto, bitfields, struct-copying),
-but programs with those features cannot be proved in Verifiable C. 
+some of the features listed above, but their general use remains outside
+the rules and tactics described here.
+
+The \lstinline{forward} tactic supports assignment between lvalues of the
+same struct or union type, including different outer qualifiers.
+Nested structs, unions and arrays are supported by the byte bridge.
+Ownership may use independently qualified source and destination types
+with the same struct or union tag. Nested qualifiers are preserved.
+The destination needs a writable share and the source
+needs a readable share. Establish these permissions before calling
+\lstinline{forward}. Ownership discovery checks candidates in their
+\lstinline{SEP} order and selects the first with a provable required
+permission. Self-assignment needs one writable predicate.
+Whole objects and selected fields may use \lstinline{data_at},
+\lstinline{data_at_}, \lstinline{field_at} or \lstinline{field_at_}.
+Field copies update the destination within its owned region and preserve
+the source, unrelated predicates and their order. Initialized ownership
+retains its original type and predicate form.
+Copies preserve unspecified bytes, padding and pointer representations.
+Both addresses must satisfy the block-copy alignment required by CompCert. Ordinary
+layouts are checked automatically. Other layouts leave an explicit
+\lstinline{copy_aligned} obligation, since \lstinline{field_compatible}
+alone does not imply this alignment.
+
+Whole objects with bitfields can instead use \lstinline{copy_bytes_at},
+which records their raw memory contents without assigning ownership to
+individual fields. Use
+\lstinline{ltac2:(ByteCopyCompspecs.run constr:(prog))} to construct the
+composite specification while retaining all existing environment
+invariants. Some nested bitfield layouts fail those invariants.
+Byte-backed copies support different outer qualifiers with the same
+struct or union tag and require explicit \lstinline{copy_aligned} facts.
+The ordinary \lstinline{data_at} predicate remains unsupported for these
+aggregate layouts.
+
+Direct bitfield stores use \lstinline{data_at} for the unsigned storage
+carrier returned by \lstinline{bitfield_carrier_type}. The carrier must
+contain an initialized integer, and the target must be nonvolatile.
+The store updates the selected bits and preserves the other carrier bits.
+Individual bitfields do not receive separate ownership predicates.
+
+This assignment support applies to normalized Clight
+\lstinline{Sassign} statements. Aggregate parameters and returns,
+direct bitfield loads, inactive union member reinterpretation, and new
+volatile or atomic operations remain outside its scope. Copies require
+equal addresses or disjoint source and destination regions. Unknown
+aliasing requires a proof before the assignment can proceed.
 
 \chapter{\textsf{clightgen}}
 \label{refcard:clightgen}
