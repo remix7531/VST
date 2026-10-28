@@ -126,9 +126,35 @@ Module StoreUnionHackB := StoreUnionHackF2B (Def) (Conseq) (MinimumLogic) (Store
 
 Module Extr : CLIGHT_SEPARATION_HOARE_LOGIC_EXTRACTION with Module CSHL_Def := Def := MinimumLogic.
 
+(** Minimum-logic copy rules implement the forward byte-ownership
+    interface. The backward adapter below supplies continuations without
+    adding an assumption about aggregate assignment. *)
+Module CopyF: CLIGHT_SEPARATION_HOARE_LOGIC_COPY_FORWARD with Module CSHL_Def := Def.
+
+Module CSHL_Def := Def.
+
+Definition semax_copy_forward := @MinimumLogic.semax_copy.
+Definition semax_selfcopy_forward := @MinimumLogic.semax_selfcopy.
+
+End CopyF.
+
+Module CopyB := CopyF2B (Def) (Conseq) (Extr) (CopyF).
+
+(** The bitfield forward interface is inherited from minimum logic,
+    including its descriptor and whole-carrier ownership requirements. *)
+Module BitfieldStoreF: CLIGHT_SEPARATION_HOARE_LOGIC_BITFIELD_STORE_FORWARD with Module CSHL_Def := Def.
+
+Module CSHL_Def := Def.
+
+Definition semax_store_bitfield_forward := @MinimumLogic.semax_store_bitfield.
+
+End BitfieldStoreF.
+
+Module BitfieldStoreB := BitfieldStoreF2B (Def) (Conseq) (Extr) (BitfieldStoreF).
+
 Module Sset := ToSset (Def) (Conseq) (Extr) (SetB) (PtrCmpB) (LoadB) (CastLoadB).
 
-Module Sassign := ToSassign (Def) (Conseq) (Extr) (StoreB) (StoreUnionHackB).
+Module Sassign := ToSassign (Def) (Conseq) (Extr) (StoreB) (StoreUnionHackB) (CopyB) (BitfieldStoreB).
 
 Theorem semax_sound: forall Espec CS Delta P c Q,
   @DeepEmbedded.DeepEmbeddedDef.semax Espec CS Delta P c Q ->

@@ -1147,6 +1147,309 @@ Qed.
 
 End StoreUnionHackB2F.
 
+(** Forward byte-copy rules expose the resources retained after an
+    assignment. Separated copy needs writable destination and readable
+    source shares. Self-copy instead needs equal evaluated addresses
+    and a single writable span. Both require compatible complete
+    aggregate types, object-size lists and block-copy alignment. *)
+Module Type CLIGHT_SEPARATION_HOARE_LOGIC_COPY_FORWARD.
+
+Declare Module CSHL_Def: CLIGHT_SEPARATION_HOARE_LOGIC_DEF.
+Import CSHL_Def.
+
+Axiom semax_copy_forward:
+  forall {CS: compspecs} {Espec: OracleKind} Delta e1 e2 sh1 sh2 old bytes P,
+    copy_type_compatible (typeof e1) (typeof e2) = true -> access_mode (typeof e1) = By_copy ->
+    complete_type cenv_cs (typeof e1) = true ->
+    writable_share sh1 -> readable_share sh2 ->
+    Zlength old = sizeof (typeof e1) -> Zlength bytes = sizeof (typeof e1) ->
+    @semax CS Espec Delta
+      (|> (tc_lvalue Delta e1 && tc_lvalue Delta e2 &&
+           local (`(copy_aligned (typeof e1)) (eval_lvalue e1)) &&
+           local (`(copy_aligned (typeof e1)) (eval_lvalue e2)) &&
+           ((`(memvals_at_ptr sh1 old) (eval_lvalue e1) *
+             `(memvals_at_ptr sh2 bytes) (eval_lvalue e2)) * P)))
+      (Sassign e1 e2)
+      (normal_ret_assert
+        ((`(memvals_at_ptr sh1 bytes) (eval_lvalue e1) *
+          `(memvals_at_ptr sh2 bytes) (eval_lvalue e2)) * P)).
+
+Axiom semax_selfcopy_forward:
+  forall {CS: compspecs} {Espec: OracleKind} Delta e1 e2 sh bytes P,
+    copy_type_compatible (typeof e1) (typeof e2) = true -> access_mode (typeof e1) = By_copy ->
+    complete_type cenv_cs (typeof e1) = true -> writable_share sh ->
+    Zlength bytes = sizeof (typeof e1) ->
+    @semax CS Espec Delta
+      (|> (tc_lvalue Delta e1 && tc_lvalue Delta e2 &&
+           local (`eq (eval_lvalue e1) (eval_lvalue e2)) &&
+           local (`(copy_aligned (typeof e1)) (eval_lvalue e1)) &&
+           (`(memvals_at_ptr sh bytes) (eval_lvalue e1) * P)))
+      (Sassign e1 e2)
+      (normal_ret_assert (`(memvals_at_ptr sh bytes) (eval_lvalue e1) * P)).
+
+End CLIGHT_SEPARATION_HOARE_LOGIC_COPY_FORWARD.
+
+(** Backward rules package the same ownership and type obligations in
+    [copy_pre] and [selfcopy_pre]. Their separating implications let the
+    client choose a postcondition from the updated resources. *)
+Module Type CLIGHT_SEPARATION_HOARE_LOGIC_COPY_BACKWARD.
+
+Declare Module CSHL_Def: CLIGHT_SEPARATION_HOARE_LOGIC_DEF.
+Import CSHL_Def.
+
+Axiom semax_copy_backward: forall {CS: compspecs} {Espec: OracleKind} Delta e1 e2 P,
+  @semax CS Espec Delta (copy_pre Delta e1 e2 P) (Sassign e1 e2) (normal_ret_assert P).
+
+Axiom semax_selfcopy_backward: forall {CS: compspecs} {Espec: OracleKind} Delta e1 e2 P,
+  @semax CS Espec Delta (selfcopy_pre Delta e1 e2 P) (Sassign e1 e2) (normal_ret_assert P).
+
+End CLIGHT_SEPARATION_HOARE_LOGIC_COPY_BACKWARD.
+
+(** Forward rules yield backward rules by exposing the existential
+    ownership witnesses and applying the supplied continuation to the
+    retained resources. No additional memory operation is assumed. *)
+Module CopyF2B
+       (Def: CLIGHT_SEPARATION_HOARE_LOGIC_DEF)
+       (Conseq: CLIGHT_SEPARATION_HOARE_LOGIC_CONSEQUENCE with Module CSHL_Def := Def)
+       (Extr: CLIGHT_SEPARATION_HOARE_LOGIC_EXTRACTION with Module CSHL_Def := Def)
+       (CopyF: CLIGHT_SEPARATION_HOARE_LOGIC_COPY_FORWARD with Module CSHL_Def := Def):
+       CLIGHT_SEPARATION_HOARE_LOGIC_COPY_BACKWARD with Module CSHL_Def := Def.
+
+Module CSHL_Def := Def.
+Module ConseqFacts := GenConseqFacts (Def) (Conseq).
+Module ExtrFacts := GenExtrFacts (Def) (Conseq) (Extr).
+Import Def Conseq ConseqFacts Extr ExtrFacts CopyF.
+
+Theorem semax_copy_backward: forall {CS: compspecs} {Espec: OracleKind} Delta e1 e2 P,
+  @semax CS Espec Delta (copy_pre Delta e1 e2 P) (Sassign e1 e2) (normal_ret_assert P).
+Proof.
+  intros. unfold copy_pre.
+  apply semax_extract_exists; intro sh1.
+  apply semax_extract_exists; intro sh2.
+  apply semax_extract_exists; intro old.
+  apply semax_extract_exists; intro bytes.
+  apply semax_extract_prop; intros (TE & AM & CT & WS & RS & LO & LB).
+  eapply semax_post'; [| eapply semax_copy_forward; eauto].
+  apply andp_left2, modus_ponens_wand.
+Qed.
+
+Theorem semax_selfcopy_backward: forall {CS: compspecs} {Espec: OracleKind} Delta e1 e2 P,
+  @semax CS Espec Delta (selfcopy_pre Delta e1 e2 P) (Sassign e1 e2) (normal_ret_assert P).
+Proof.
+  intros. unfold selfcopy_pre.
+  apply semax_extract_exists; intro sh.
+  apply semax_extract_exists; intro bytes.
+  apply semax_extract_prop; intros (TE & AM & CT & WS & LB).
+  eapply semax_post'; [| eapply semax_selfcopy_forward; eauto].
+  apply andp_left2, modus_ponens_wand.
+Qed.
+
+End CopyF2B.
+
+(** The forward frame is recovered from the backward interface by
+    choosing the original byte lists and a continuation that returns
+    the updated ownership together with that frame. *)
+Module CopyB2F
+       (Def: CLIGHT_SEPARATION_HOARE_LOGIC_DEF)
+       (Conseq: CLIGHT_SEPARATION_HOARE_LOGIC_CONSEQUENCE with Module CSHL_Def := Def)
+       (CopyB: CLIGHT_SEPARATION_HOARE_LOGIC_COPY_BACKWARD with Module CSHL_Def := Def):
+       CLIGHT_SEPARATION_HOARE_LOGIC_COPY_FORWARD with Module CSHL_Def := Def.
+
+Module CSHL_Def := Def.
+Module ConseqFacts := GenConseqFacts (Def) (Conseq).
+Import Def Conseq ConseqFacts CopyB.
+
+Theorem semax_copy_forward:
+  forall {CS: compspecs} {Espec: OracleKind} Delta e1 e2 sh1 sh2 old bytes P,
+    copy_type_compatible (typeof e1) (typeof e2) = true -> access_mode (typeof e1) = By_copy ->
+    complete_type cenv_cs (typeof e1) = true ->
+    writable_share sh1 -> readable_share sh2 ->
+    Zlength old = sizeof (typeof e1) -> Zlength bytes = sizeof (typeof e1) ->
+    @semax CS Espec Delta
+      (|> (tc_lvalue Delta e1 && tc_lvalue Delta e2 &&
+           local (`(copy_aligned (typeof e1)) (eval_lvalue e1)) &&
+           local (`(copy_aligned (typeof e1)) (eval_lvalue e2)) &&
+           ((`(memvals_at_ptr sh1 old) (eval_lvalue e1) *
+             `(memvals_at_ptr sh2 bytes) (eval_lvalue e2)) * P)))
+      (Sassign e1 e2)
+      (normal_ret_assert
+        ((`(memvals_at_ptr sh1 bytes) (eval_lvalue e1) *
+          `(memvals_at_ptr sh2 bytes) (eval_lvalue e2)) * P)).
+Proof.
+  intros. eapply semax_pre; [| apply semax_copy_backward].
+  unfold copy_pre.
+  apply (exp_right sh1), (exp_right sh2), (exp_right old), (exp_right bytes).
+  apply andp_right; [apply prop_right; tauto |].
+  apply andp_left2, later_derives.
+  apply andp_derives; auto. apply sepcon_derives; auto.
+  apply wand_sepcon_adjoint. rewrite sepcon_comm. apply derives_refl.
+Qed.
+
+Theorem semax_selfcopy_forward:
+  forall {CS: compspecs} {Espec: OracleKind} Delta e1 e2 sh bytes P,
+    copy_type_compatible (typeof e1) (typeof e2) = true -> access_mode (typeof e1) = By_copy ->
+    complete_type cenv_cs (typeof e1) = true -> writable_share sh ->
+    Zlength bytes = sizeof (typeof e1) ->
+    @semax CS Espec Delta
+      (|> (tc_lvalue Delta e1 && tc_lvalue Delta e2 &&
+           local (`eq (eval_lvalue e1) (eval_lvalue e2)) &&
+           local (`(copy_aligned (typeof e1)) (eval_lvalue e1)) &&
+           (`(memvals_at_ptr sh bytes) (eval_lvalue e1) * P)))
+      (Sassign e1 e2)
+      (normal_ret_assert (`(memvals_at_ptr sh bytes) (eval_lvalue e1) * P)).
+Proof.
+  intros. eapply semax_pre; [| apply semax_selfcopy_backward].
+  unfold selfcopy_pre. apply (exp_right sh), (exp_right bytes).
+  apply andp_right; [apply prop_right; tauto |].
+  apply andp_left2, later_derives.
+  apply andp_derives; auto. apply sepcon_derives; auto.
+  apply wand_sepcon_adjoint. rewrite sepcon_comm. apply derives_refl.
+Qed.
+
+End CopyB2F.
+
+(** The bitfield interface owns a writable integer carrier at the
+    descriptor offset. It requires a valid bit range, a nonvolatile
+    target and a typed cast yielding the new integer. The updated
+    carrier contains the inserted bits followed by chunk normalization,
+    and the arbitrary spatial frame survives. *)
+Module Type CLIGHT_SEPARATION_HOARE_LOGIC_BITFIELD_STORE_FORWARD.
+
+Declare Module CSHL_Def: CLIGHT_SEPARATION_HOARE_LOGIC_DEF.
+Import CSHL_Def.
+
+Axiom semax_store_bitfield_forward:
+  forall {CS: compspecs} {Espec: OracleKind}
+    Delta root field rhs delta sz sg pos width attributes sh carrier new_value P,
+    bitfield_field cenv_cs (typeof root) field delta (Bits sz sg pos width) ->
+    0 <= pos -> 0 < width <= bitsize_intsize sz ->
+    pos + width <= Cop.bitsize_carrier sz ->
+    attr_volatile attributes = false -> writable_share sh ->
+    let target_type := Ctypes.Tint sz
+      (if zlt width (bitsize_intsize sz) then Signed else sg) attributes in
+    @semax CS Espec Delta
+      (|> (tc_lvalue Delta root && tc_expr Delta (Ecast rhs target_type) &&
+           local (fun rho =>
+             force_val (sem_cast (typeof rhs) target_type (eval_expr rhs rho)) =
+             Vint new_value) &&
+           ((fun rho => mapsto sh (bitfield_carrier_type sz)
+               (offset_val delta (eval_lvalue root rho)) (Vint carrier)) * P)))
+      (Sassign (Efield root field target_type) rhs)
+      (normal_ret_assert
+        ((fun rho => mapsto sh (bitfield_carrier_type sz)
+            (offset_val delta (eval_lvalue root rho))
+            (Val.load_result (Cop.chunk_for_carrier sz)
+              (Vint (Int.bitfield_insert (Cop.first_bit sz pos width)
+                width carrier new_value)))) * P)).
+
+End CLIGHT_SEPARATION_HOARE_LOGIC_BITFIELD_STORE_FORWARD.
+
+(** The backward bitfield rule uses [bitfield_store_pre] to supply the
+    descriptor, carrier ownership and continuation for the result.
+    Whole-carrier ownership prevents a write from invalidating a frame
+    that separately claims another field in that same carrier. *)
+Module Type CLIGHT_SEPARATION_HOARE_LOGIC_BITFIELD_STORE_BACKWARD.
+
+Declare Module CSHL_Def: CLIGHT_SEPARATION_HOARE_LOGIC_DEF.
+Import CSHL_Def.
+
+Axiom semax_store_bitfield_backward:
+  forall {CS: compspecs} {Espec: OracleKind} Delta e1 e2 P,
+    @semax CS Espec Delta (bitfield_store_pre Delta e1 e2 P)
+      (Sassign e1 e2) (normal_ret_assert P).
+
+End CLIGHT_SEPARATION_HOARE_LOGIC_BITFIELD_STORE_BACKWARD.
+
+(** Existential carrier witnesses and a separating continuation turn
+    the forward bitfield guarantee into the backward rule. *)
+Module BitfieldStoreF2B
+       (Def: CLIGHT_SEPARATION_HOARE_LOGIC_DEF)
+       (Conseq: CLIGHT_SEPARATION_HOARE_LOGIC_CONSEQUENCE with Module CSHL_Def := Def)
+       (Extr: CLIGHT_SEPARATION_HOARE_LOGIC_EXTRACTION with Module CSHL_Def := Def)
+       (BitfieldF: CLIGHT_SEPARATION_HOARE_LOGIC_BITFIELD_STORE_FORWARD with Module CSHL_Def := Def):
+       CLIGHT_SEPARATION_HOARE_LOGIC_BITFIELD_STORE_BACKWARD with Module CSHL_Def := Def.
+
+Module CSHL_Def := Def.
+Module ConseqFacts := GenConseqFacts (Def) (Conseq).
+Module ExtrFacts := GenExtrFacts (Def) (Conseq) (Extr).
+Import Def Conseq ConseqFacts Extr ExtrFacts BitfieldF.
+
+Theorem semax_store_bitfield_backward:
+  forall {CS: compspecs} {Espec: OracleKind} Delta e1 e2 P,
+    @semax CS Espec Delta (bitfield_store_pre Delta e1 e2 P)
+      (Sassign e1 e2) (normal_ret_assert P).
+Proof.
+  intros; unfold bitfield_store_pre.
+  apply semax_extract_exists; intro root.
+  apply semax_extract_exists; intro field.
+  apply semax_extract_exists; intro delta.
+  apply semax_extract_exists; intro sz.
+  apply semax_extract_exists; intro sg.
+  apply semax_extract_exists; intro pos.
+  apply semax_extract_exists; intro width.
+  apply semax_extract_exists; intro attributes.
+  apply semax_extract_exists; intro sh.
+  apply semax_extract_exists; intro carrier.
+  apply semax_extract_exists; intro new_value.
+  apply semax_extract_prop;
+    intros (He1 & Hfield & Hpos & Hwidth & Hcarrier & Hnonvol & Hwrite).
+  subst e1.
+  eapply semax_post'; [| eapply semax_store_bitfield_forward; eauto].
+  apply andp_left2, modus_ponens_wand.
+Qed.
+
+End BitfieldStoreF2B.
+
+(** Choosing the retained frame as the continuation recovers the forward
+    carrier update from the backward bitfield interface. *)
+Module BitfieldStoreB2F
+       (Def: CLIGHT_SEPARATION_HOARE_LOGIC_DEF)
+       (Conseq: CLIGHT_SEPARATION_HOARE_LOGIC_CONSEQUENCE with Module CSHL_Def := Def)
+       (BitfieldB: CLIGHT_SEPARATION_HOARE_LOGIC_BITFIELD_STORE_BACKWARD with Module CSHL_Def := Def):
+       CLIGHT_SEPARATION_HOARE_LOGIC_BITFIELD_STORE_FORWARD with Module CSHL_Def := Def.
+
+Module CSHL_Def := Def.
+Module ConseqFacts := GenConseqFacts (Def) (Conseq).
+Import Def Conseq ConseqFacts BitfieldB.
+
+Theorem semax_store_bitfield_forward:
+  forall {CS: compspecs} {Espec: OracleKind}
+    Delta root field rhs delta sz sg pos width attributes sh carrier new_value P,
+    bitfield_field cenv_cs (typeof root) field delta (Bits sz sg pos width) ->
+    0 <= pos -> 0 < width <= bitsize_intsize sz ->
+    pos + width <= Cop.bitsize_carrier sz ->
+    attr_volatile attributes = false -> writable_share sh ->
+    let target_type := Ctypes.Tint sz
+      (if zlt width (bitsize_intsize sz) then Signed else sg) attributes in
+    @semax CS Espec Delta
+      (|> (tc_lvalue Delta root && tc_expr Delta (Ecast rhs target_type) &&
+           local (fun rho =>
+             force_val (sem_cast (typeof rhs) target_type (eval_expr rhs rho)) =
+             Vint new_value) &&
+           ((fun rho => mapsto sh (bitfield_carrier_type sz)
+               (offset_val delta (eval_lvalue root rho)) (Vint carrier)) * P)))
+      (Sassign (Efield root field target_type) rhs)
+      (normal_ret_assert
+        ((fun rho => mapsto sh (bitfield_carrier_type sz)
+            (offset_val delta (eval_lvalue root rho))
+            (Val.load_result (Cop.chunk_for_carrier sz)
+              (Vint (Int.bitfield_insert (Cop.first_bit sz pos width)
+                width carrier new_value)))) * P)).
+Proof.
+  intros; eapply semax_pre; [| apply semax_store_bitfield_backward].
+  unfold bitfield_store_pre.
+  apply (exp_right root), (exp_right field), (exp_right delta), (exp_right sz),
+    (exp_right sg), (exp_right pos), (exp_right width), (exp_right attributes),
+    (exp_right sh), (exp_right carrier), (exp_right new_value).
+  apply andp_right; [apply prop_right; tauto |].
+  apply andp_left2, later_derives.
+  apply andp_derives; [apply derives_refl |].
+  apply sepcon_derives; [apply derives_refl |].
+  apply wand_sepcon_adjoint; rewrite sepcon_comm; apply derives_refl.
+Qed.
+
+End BitfieldStoreB2F.
+
 Module Type CLIGHT_SEPARATION_HOARE_LOGIC_SASSIGN_BACKWARD.
 
 Declare Module CSHL_Def: CLIGHT_SEPARATION_HOARE_LOGIC_DEF.
@@ -1156,7 +1459,7 @@ Import CSHL_Def.
 Axiom semax_store_store_union_hack_backward: forall {CS: compspecs} {Espec: OracleKind} (Delta: tycontext),
   forall (P: environ->mpred) e1 e2,
     @semax CS Espec Delta
-       ((EX sh: share, !! writable_share sh &&
+       ((((EX sh: share, !! writable_share sh &&
              |> ( (tc_lvalue Delta e1) &&  (tc_expr Delta (Ecast e2 (typeof e1)))  &&
              ((`(mapsto_ sh (typeof e1)) (eval_lvalue e1)) *
               (`(mapsto sh (typeof e1)) (eval_lvalue e1) (`force_val (`(sem_cast (typeof e2) (typeof e1)) (eval_expr e2))) -* P))))
@@ -1174,7 +1477,8 @@ Axiom semax_store_store_union_hack_backward: forall {CS: compspecs} {Espec: Orac
                     imp (local  ((`decode_encode_val )
                          ((` force_val) ((`(sem_cast (typeof e2) (typeof e1))) (eval_expr e2))) (`ch) (`ch') (`v') ))
                       (P)))))
-       )
+       ) || (copy_pre Delta e1 e2 P || selfcopy_pre Delta e1 e2 P)) ||
+        bitfield_store_pre Delta e1 e2 P)
         (Sassign e1 e2) (normal_ret_assert P).
 
 End CLIGHT_SEPARATION_HOARE_LOGIC_SASSIGN_BACKWARD.
@@ -1184,7 +1488,9 @@ Module ToSassign
        (Conseq: CLIGHT_SEPARATION_HOARE_LOGIC_CONSEQUENCE with Module CSHL_Def := Def)
        (Extr: CLIGHT_SEPARATION_HOARE_LOGIC_EXTRACTION with Module CSHL_Def := Def)
        (StoreB: CLIGHT_SEPARATION_HOARE_LOGIC_STORE_BACKWARD with Module CSHL_Def := Def)
-       (StoreUnionHackB: CLIGHT_SEPARATION_HOARE_LOGIC_STORE_UNION_HACK_BACKWARD with Module CSHL_Def := Def):
+       (StoreUnionHackB: CLIGHT_SEPARATION_HOARE_LOGIC_STORE_UNION_HACK_BACKWARD with Module CSHL_Def := Def)
+       (CopyB: CLIGHT_SEPARATION_HOARE_LOGIC_COPY_BACKWARD with Module CSHL_Def := Def)
+       (BitfieldB: CLIGHT_SEPARATION_HOARE_LOGIC_BITFIELD_STORE_BACKWARD with Module CSHL_Def := Def):
        CLIGHT_SEPARATION_HOARE_LOGIC_SASSIGN_BACKWARD with Module CSHL_Def := Def.
 
 Module CSHL_Def := Def.
@@ -1196,12 +1502,14 @@ Import Conseq.
 Import ConseqFacts.
 Import StoreB.
 Import StoreUnionHackB.
+Import CopyB.
+Import BitfieldB.
 Import ExtrFacts.
 
 Theorem semax_store_store_union_hack_backward: forall {CS: compspecs} {Espec: OracleKind} (Delta: tycontext),
   forall (P: environ->mpred) e1 e2,
     @semax CS Espec Delta
-       ((EX sh: share, !! writable_share sh &&
+       ((((EX sh: share, !! writable_share sh &&
              |> ( (tc_lvalue Delta e1) &&  (tc_expr Delta (Ecast e2 (typeof e1)))  &&
              ((`(mapsto_ sh (typeof e1)) (eval_lvalue e1)) *
               (`(mapsto sh (typeof e1)) (eval_lvalue e1) (`force_val (`(sem_cast (typeof e2) (typeof e1)) (eval_expr e2))) -* P))))
@@ -1219,13 +1527,20 @@ Theorem semax_store_store_union_hack_backward: forall {CS: compspecs} {Espec: Or
                     imp (local  ((`decode_encode_val )
                          ((` force_val) ((`(sem_cast (typeof e2) (typeof e1))) (eval_expr e2))) (`ch) (`ch') (`v') ))
                       (P)))))
-       )
+       ) || (copy_pre Delta e1 e2 P || selfcopy_pre Delta e1 e2 P)) ||
+        bitfield_store_pre Delta e1 e2 P)
         (Sassign e1 e2) (normal_ret_assert P).
 Proof.
   intros.
   apply semax_orp.
-  + apply semax_store_backward.
-  + apply semax_store_union_hack_backward.
+  - apply semax_orp.
+    + apply semax_orp.
+      * apply semax_store_backward.
+      * apply semax_store_union_hack_backward.
+    + apply semax_orp.
+      * apply semax_copy_backward.
+      * apply semax_selfcopy_backward.
+  - apply semax_store_bitfield_backward.
 Qed.
 
 End ToSassign.
@@ -1253,7 +1568,7 @@ Theorem semax_store_backward: forall {CS: compspecs} {Espec: OracleKind} (Delta:
 Proof.
   intros.
   eapply semax_pre_simple; [| apply semax_store_store_union_hack_backward].
-  apply orp_right1; auto.
+  apply orp_right1, orp_right1, orp_right1; auto.
 Qed.
 
 End Sassign2Store.
@@ -1294,10 +1609,57 @@ Theorem semax_store_union_hack_backward:
 Proof.
   intros.
   eapply semax_pre_simple; [| apply semax_store_store_union_hack_backward].
-  apply orp_right2; auto.
+  apply orp_right1, orp_right1, orp_right2; auto.
 Qed.
 
 End Sassign2StoreUnionHack.
+
+Module Sassign2Copy
+       (Def: CLIGHT_SEPARATION_HOARE_LOGIC_DEF)
+       (Conseq: CLIGHT_SEPARATION_HOARE_LOGIC_CONSEQUENCE with Module CSHL_Def := Def)
+       (Sassign: CLIGHT_SEPARATION_HOARE_LOGIC_SASSIGN_BACKWARD with Module CSHL_Def := Def):
+       CLIGHT_SEPARATION_HOARE_LOGIC_COPY_BACKWARD with Module CSHL_Def := Def.
+
+Module CSHL_Def := Def.
+Module ConseqFacts := GenConseqFacts (Def) (Conseq).
+Import Def Conseq ConseqFacts Sassign.
+
+Theorem semax_copy_backward: forall {CS: compspecs} {Espec: OracleKind} Delta e1 e2 P,
+  @semax CS Espec Delta (copy_pre Delta e1 e2 P) (Sassign e1 e2) (normal_ret_assert P).
+Proof.
+  intros. eapply semax_pre_simple; [| apply semax_store_store_union_hack_backward].
+  apply orp_right1, orp_right2, orp_right1, derives_refl.
+Qed.
+
+Theorem semax_selfcopy_backward: forall {CS: compspecs} {Espec: OracleKind} Delta e1 e2 P,
+  @semax CS Espec Delta (selfcopy_pre Delta e1 e2 P) (Sassign e1 e2) (normal_ret_assert P).
+Proof.
+  intros. eapply semax_pre_simple; [| apply semax_store_store_union_hack_backward].
+  apply orp_right1, orp_right2, orp_right2, derives_refl.
+Qed.
+
+End Sassign2Copy.
+
+Module Sassign2Bitfield
+       (Def: CLIGHT_SEPARATION_HOARE_LOGIC_DEF)
+       (Conseq: CLIGHT_SEPARATION_HOARE_LOGIC_CONSEQUENCE with Module CSHL_Def := Def)
+       (Sassign: CLIGHT_SEPARATION_HOARE_LOGIC_SASSIGN_BACKWARD with Module CSHL_Def := Def):
+       CLIGHT_SEPARATION_HOARE_LOGIC_BITFIELD_STORE_BACKWARD with Module CSHL_Def := Def.
+
+Module CSHL_Def := Def.
+Module ConseqFacts := GenConseqFacts (Def) (Conseq).
+Import Def Conseq ConseqFacts Sassign.
+
+Theorem semax_store_bitfield_backward:
+  forall {CS: compspecs} {Espec: OracleKind} Delta e1 e2 P,
+    @semax CS Espec Delta (bitfield_store_pre Delta e1 e2 P)
+      (Sassign e1 e2) (normal_ret_assert P).
+Proof.
+  intros. eapply semax_pre_simple; [| apply semax_store_store_union_hack_backward].
+  apply orp_right2, derives_refl.
+Qed.
+
+End Sassign2Bitfield.
 
 Module Type CLIGHT_SEPARATION_HOARE_LOGIC_CALL_FORWARD.
 
@@ -2409,4 +2771,3 @@ Proof.
 Qed.
 
 End Sset2CastLoad.
-

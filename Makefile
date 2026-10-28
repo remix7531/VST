@@ -527,7 +527,7 @@ FLOYD_FILES= \
    base2.v functional_base.v go_lower.v \
    library.v proofauto.v computable_theorems.v computable_functions.v \
    type_induction.v align_compatible_dec.v reptype_lemmas.v aggregate_type.v aggregate_pred.v \
-   nested_pred_lemmas.v compact_prod_sum.v \
+   nested_pred_lemmas.v compact_prod_sum.v copy_pre_lemmas.v bitfield_pre_lemmas.v \
    client_lemmas.v canon.v canonicalize.v closed_lemmas.v jmeq_lemmas.v \
    compare_lemmas.v sc_set_load_store.v \
    loadstore_mapsto.v loadstore_field_at.v field_compat.v nested_loadstore.v \

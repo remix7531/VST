@@ -19,6 +19,9 @@ Require Import VST.veric.Clight_lemmas.
 Require Import VST.veric.Clight_initial_world.
 Require Import VST.veric.semax_call.
 Require Import VST.veric.semax_straight.
+Require Import VST.veric.semax_copy.
+Require Import VST.veric.bitfield.
+Require Import VST.veric.semax_bitfield.
 Require Import VST.veric.semax_loop.
 Require Import VST.veric.semax_switch.
 Require Import VST.veric.semax_prog.
@@ -263,6 +266,42 @@ intros; apply semax_store; auto.
 Qed.
 
 Definition semax_store_union_hack := @semax_store_union_hack.
+(** The abstract copy interfaces are implemented by the concrete juicy
+    memory proofs, retaining their ownership and alignment premises. *)
+Definition semax_copy := @semax_copy.
+Definition semax_selfcopy := @semax_selfcopy.
+
+(** The concrete bitfield proof supplies the interface rule at the same
+    descriptor, cast and carrier premises. The chunk load result in the
+    postcondition accounts for normalization of narrow carriers. *)
+Lemma semax_store_bitfield:
+  forall (CS: compspecs) (Espec: OracleKind)
+    Delta root field rhs delta sz sg pos width attributes sh carrier new_value P,
+    bitfield_field cenv_cs (typeof root) field delta (Bits sz sg pos width) ->
+    0 <= pos -> 0 < width <= bitsize_intsize sz ->
+    pos + width <= Cop.bitsize_carrier sz ->
+    attr_volatile attributes = false -> writable_share sh ->
+    let target_type := Ctypes.Tint sz
+      (if zlt width (bitsize_intsize sz) then Signed else sg) attributes in
+    semax Espec Delta
+      (fun rho => (|>
+        (extend_tc.tc_lvalue Delta root rho &&
+         extend_tc.tc_expr Delta (Ecast rhs target_type) rho &&
+         !! (force_val (sem_cast (typeof rhs) target_type (eval_expr rhs rho)) =
+             Vint new_value) &&
+         (mapsto_memory_block.mapsto sh (bitfield_carrier_type sz)
+            (offset_val delta (eval_lvalue root rho)) (Vint carrier) * P rho)))%pred)
+      (Sassign (Efield root field target_type) rhs)
+      (Clight_seplog.normal_ret_assert
+        (fun rho => (mapsto_memory_block.mapsto sh (bitfield_carrier_type sz)
+          (offset_val delta (eval_lvalue root rho))
+          (Val.load_result (Cop.chunk_for_carrier sz)
+            (Vint (Int.bitfield_insert (Cop.first_bit sz pos width)
+              width carrier new_value))) * P rho)%pred)).
+Proof.
+  intros.
+  apply semax_bitfield.semax_store_bitfield; auto.
+Qed.
 
 Definition semax_load := @semax_load.
 Definition semax_cast_load := @semax_cast_load.
@@ -294,4 +333,3 @@ Qed.
 Definition semax_prog_rule := @semax_prog_rule.
 
 End VericSound.
-

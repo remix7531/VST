@@ -10,6 +10,8 @@ Require Export VST.veric.juicy_extspec.
 Require Import VST.veric.NullExtension.
 Require Import VST.floyd.val_lemmas VST.floyd.assert_lemmas.
 Require Import VST.floyd.SeparationLogicFacts.
+Require Import VST.floyd.copy_pre_lemmas.
+Require Import VST.floyd.bitfield_pre_lemmas.
 Import LiftNotation.
 Import compcert.lib.Maps.
 Import Ctypes LiftNotation.
@@ -237,7 +239,7 @@ Inductive semax {CS: compspecs} {Espec: OracleKind} (Delta: tycontext): (environ
         (Sset id e) (normal_ret_assert P)
 | semax_store_store_union_hack_backward: forall (P: environ->mpred) e1 e2,
     @semax CS Espec Delta
-       ((EX sh: share, !! writable_share sh &&
+       ((((EX sh: share, !! writable_share sh &&
              |> ( (tc_lvalue Delta e1) &&  (tc_expr Delta (Ecast e2 (typeof e1)))  &&
              ((`(mapsto_ sh (typeof e1)) (eval_lvalue e1)) *
               (`(mapsto sh (typeof e1)) (eval_lvalue e1) (`force_val (`(sem_cast (typeof e2) (typeof e1)) (eval_expr e2))) -* P))))
@@ -255,7 +257,8 @@ Inductive semax {CS: compspecs} {Espec: OracleKind} (Delta: tycontext): (environ
                     imp (local  ((`decode_encode_val )
                          ((` force_val) ((`(sem_cast (typeof e2) (typeof e1))) (eval_expr e2))) (`ch) (`ch') (`v') ))
                       (P)))))
-       )
+       ) || (copy_pre Delta e1 e2 P || selfcopy_pre Delta e1 e2 P)) ||
+         bitfield_store_pre Delta e1 e2 P)
         (Sassign e1 e2) (normal_ret_assert P)
 | semax_skip: forall P, @semax CS Espec Delta P Sskip (normal_ret_assert P)
 | semax_builtin: forall P opt ext tl el, @semax CS Espec Delta FF (Sbuiltin opt ext tl el) P
@@ -520,7 +523,7 @@ Lemma semax_assign_inv: forall {CS: compspecs} {Espec: OracleKind} Delta e1 e2 P
   @semax CS Espec Delta P (Sassign e1 e2) Q ->
   local (tc_environ Delta) && (allp_fun_id Delta && P) |--
      |={Ensembles.Full_set}=>
-      ((EX sh: share, !! writable_share sh &&
+      ((((EX sh: share, !! writable_share sh &&
              |> ( (tc_lvalue Delta e1) &&  (tc_expr Delta (Ecast e2 (typeof e1)))  &&
              ((`(mapsto_ sh (typeof e1)) (eval_lvalue e1)) *
               (`(mapsto sh (typeof e1)) (eval_lvalue e1) (`force_val (`(sem_cast (typeof e2) (typeof e1)) (eval_expr e2))) -* |={Ensembles.Full_set}=> RA_normal Q))))
@@ -538,13 +541,20 @@ Lemma semax_assign_inv: forall {CS: compspecs} {Espec: OracleKind} Delta e1 e2 P
                     imp (local  ((`decode_encode_val )
                          ((` force_val) ((`(sem_cast (typeof e2) (typeof e1))) (eval_expr e2))) (`ch) (`ch') (`v') ))
                       (|={Ensembles.Full_set}=> RA_normal Q)))))
-       ).
+       ) || (copy_pre Delta e1 e2 (|={Ensembles.Full_set}=> RA_normal Q) ||
+             selfcopy_pre Delta e1 e2 (|={Ensembles.Full_set}=> RA_normal Q))) ||
+         bitfield_store_pre Delta e1 e2 (|={Ensembles.Full_set}=> RA_normal Q)).
 Proof.
   intros.
   remember (Sassign e1 e2) as c eqn:?H.
   induction H; try solve [inv H0].
   + inv H0.
     reduce2derives.
+    apply orp_derives;
+      [| apply bitfield_store_pre_derives; apply fupd_intro].
+    apply orp_derives;
+      [| apply orp_derives;
+         [apply copy_pre_derives | apply selfcopy_pre_derives]; apply fupd_intro].
     apply orp_derives.
     - apply exp_derives; intro sh.
       apply andp_derives; auto.
@@ -569,6 +579,13 @@ Proof.
     derives_rewrite -> H.
     derives_rewrite -> (IHsemax eq_refl).
     reduceR.
+    apply orp_ENTAILL;
+      [| apply bitfield_store_pre_ENTAILL;
+         apply derives_full_fupd_left, H1].
+    apply orp_ENTAILL;
+      [| apply orp_ENTAILL;
+         [apply copy_pre_ENTAILL | apply selfcopy_pre_ENTAILL];
+         apply derives_full_fupd_left, H1].
     apply orp_ENTAILL.
     - apply exp_ENTAILL; intro sh.
       apply andp_ENTAILL; [reduceLL; apply ENTAIL_refl |].
@@ -1347,6 +1364,26 @@ Module StoreF := StoreB2F (DeepEmbeddedDef) (Conseq) (StoreB).
 
 Definition semax_store := @StoreF.semax_store_forward.
 
+Module CopyB := Sassign2Copy (DeepEmbeddedDef) (Conseq) (Sassign).
+
+Module CopyF := CopyB2F (DeepEmbeddedDef) (Conseq) (CopyB).
+
+(** These exported aggregate rules inherit the backward assignment
+    interface through the forward adapter. Copy preserves a separated
+    readable source. Self-copy retains one writable span at equal
+    lvalue addresses. Neither rule performs scalar decoding. *)
+Definition semax_copy := @CopyF.semax_copy_forward.
+Definition semax_selfcopy := @CopyF.semax_selfcopy_forward.
+
+Module BitfieldStoreB := Sassign2Bitfield (DeepEmbeddedDef) (Conseq) (Sassign).
+
+Module BitfieldStoreF := BitfieldStoreB2F (DeepEmbeddedDef) (Conseq) (BitfieldStoreB).
+
+(** The exported bitfield rule retains its frame and returns the carrier
+    after bit insertion and chunk normalization. Descriptor validity,
+    whole-carrier writable ownership and nonvolatility are premises. *)
+Definition semax_store_bitfield := @BitfieldStoreF.semax_store_bitfield_forward.
+
 Definition semax_skip := @AuxDefs.semax_skip.
 
 Definition semax_conseq := @AuxDefs.semax_conseq.
@@ -1637,6 +1674,11 @@ Proof.
       * apply ENTAIL_refl.
       * apply ENTAIL_refl.
   + eapply semax_pre; [| apply AuxDefs.semax_store_store_union_hack_backward].
+    apply orp_ENTAIL;
+      [| apply bitfield_store_pre_tycontext_sub; auto].
+    apply orp_ENTAIL;
+      [| apply orp_ENTAIL;
+         [apply copy_pre_tycontext_sub | apply selfcopy_pre_tycontext_sub]; auto].
     apply orp_ENTAIL.
     - apply exp_ENTAIL; intro sh.
       apply andp_ENTAIL; [apply ENTAIL_refl |].
@@ -1710,20 +1752,6 @@ Lemma rvalue_cspecs_sub: forall {CS CS'} (CSUB: cspecs_sub  CS CS') Delta e rho,
   @tc_expr CS Delta e rho |-- !! (@eval_expr CS e rho = @eval_expr CS' e rho).
 Proof. intros. destruct CSUB as [CSUB _]. apply (rvalue_cenv_sub CSUB); trivial. Qed. 
 
-Lemma lvalue_cenv_sub: forall {CS CS'} (CSUB: cenv_sub (@cenv_cs CS) (@cenv_cs CS')) Delta e rho,
-  tc_environ Delta rho ->
-  @tc_lvalue CS Delta e rho |-- !! (@eval_lvalue CS e rho = @eval_lvalue CS' e rho).
-Proof. 
-  intros. apply derives_trans with (!! is_pointer_or_null (@eval_lvalue CS e rho) && @tc_lvalue CS Delta e rho).
-  { apply andp_right; trivial. apply typecheck_lvalue_sound; trivial. }
-  normalize. rewrite (expr_lemmas.eval_lvalue_cenv_sub_eq CSUB). normalize.
-  intros N; rewrite N in H0; clear N. apply H0.
-Qed.
-Lemma lvalue_cspecs_sub: forall {CS CS'} (CSUB: cspecs_sub  CS CS') Delta e rho,
-  tc_environ Delta rho ->
-  @tc_lvalue CS Delta e rho |-- !! (@eval_lvalue CS e rho = @eval_lvalue CS' e rho).
-Proof. intros. destruct CSUB as [CSUB _]. apply (lvalue_cenv_sub CSUB); trivial. Qed.  
-
 Lemma denote_tc_bool_CSCS' {CS CS'} v e: @denote_tc_assert CS (tc_bool v e) = @denote_tc_assert CS' (tc_bool v e).
 Proof. destruct v; simpl; trivial. Qed.
 
@@ -1767,7 +1795,7 @@ Definition SETpre CS Delta id e P :=
           @subst mpred id (` (force_val (sem_cast (typeof e1) t1 v2))) P)).
 
 Definition ASSIGNpre (CS: compspecs) Delta e1 e2 P: environ -> mpred :=
-  (EX sh : share,
+  (((EX sh : share,
            !! writable_share sh &&
            |> (tc_lvalue Delta e1 && tc_expr Delta (Ecast e2 (typeof e1)) &&
                ((` (mapsto_ sh (typeof e1))) (eval_lvalue e1) *
@@ -1788,7 +1816,9 @@ Definition ASSIGNpre (CS: compspecs) Delta e1 e2 P: environ -> mpred :=
                       ((` decode_encode_val)
                          ((` force_val)
                             ((` (sem_cast (typeof e2) (typeof e1))) (eval_expr e2)))
-                         (` ch) (` ch') (` v'))) P)))) .
+                         (` ch) (` ch') (` v'))) P))))) ||
+  (copy_pre Delta e1 e2 P || selfcopy_pre Delta e1 e2 P)) ||
+  bitfield_store_pre Delta e1 e2 P.
 
 Definition STOREpre CS Delta e1 e2 P := (EX sh : share,
      !! writable_share sh &&
@@ -2022,6 +2052,28 @@ Proof.
   + apply semax_pre with (andp (ASSIGNpre CS Delta e1 e2 P) (ASSIGNpre CS' Delta e1 e2 P)).
     - intros rho. simpl. apply derives_extract_prop; intros TEDelta.
       apply andp_right. apply derives_refl. unfold ASSIGNpre; simpl.
+      apply orp_derives; [|].
+      2: {
+        eapply derives_trans;
+          [| exact (bitfield_store_pre_cspecs_sub CSUB Delta e1 e2 P rho)].
+        change (@bitfield_store_pre CS Delta e1 e2 P rho |--
+          !! (tc_environ Delta rho) && @bitfield_store_pre CS Delta e1 e2 P rho).
+        apply andp_right; [apply prop_right; exact TEDelta | apply derives_refl].
+      }
+      apply orp_derives; [|].
+      2: {
+        apply orp_derives.
+        + eapply derives_trans;
+            [| exact (copy_pre_cspecs_sub CSUB Delta e1 e2 P rho)].
+          change (@copy_pre CS Delta e1 e2 P rho |--
+            !! (tc_environ Delta rho) && @copy_pre CS Delta e1 e2 P rho).
+          apply andp_right; [apply prop_right; exact TEDelta | apply derives_refl].
+        + eapply derives_trans;
+            [| exact (selfcopy_pre_cspecs_sub CSUB Delta e1 e2 P rho)].
+          change (@selfcopy_pre CS Delta e1 e2 P rho |--
+            !! (tc_environ Delta rho) && @selfcopy_pre CS Delta e1 e2 P rho).
+          apply andp_right; [apply prop_right; exact TEDelta | apply derives_refl].
+      }
       apply orp_derives.
       *
         apply exp_derives; intros sh. normalize. apply later_derives.
@@ -2348,6 +2400,13 @@ Proof.
   + rewrite frame_normal.
     eapply semax_pre; [| apply AuxDefs.semax_store_store_union_hack_backward].
     apply andp_left2.
+    rewrite distrib_orp_sepcon.
+    apply orp_derives;
+      [| apply bitfield_store_pre_frame].
+    rewrite distrib_orp_sepcon.
+    apply orp_derives;
+      [| rewrite distrib_orp_sepcon; apply orp_derives;
+         [apply copy_pre_frame | apply selfcopy_pre_frame]].
     rewrite distrib_orp_sepcon.
     apply orp_derives.
     - rewrite exp_sepcon1; apply exp_derives; intros sh.
@@ -3264,4 +3323,3 @@ Definition semax_adapt := @DeepEmbeddedMinimumSeparationLogic.semax_adapt.
 End DeepEmbeddedPracticalLogic.
 
 End DeepEmbedded.
-

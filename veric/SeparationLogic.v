@@ -27,6 +27,9 @@ Require Export VST.veric.expr.
 Require Export VST.veric.Clight_lemmas.
 Require Export VST.veric.composite_compute.
 Require Export VST.veric.align_mem.
+Require Export VST.veric.memvals_at.
+Require Export VST.veric.copy.
+Require Export VST.veric.bitfield.
 Require Export VST.veric.shares.
 Require Export VST.veric.seplog.
 Require VST.veric.Clight_seplog.
@@ -1052,6 +1055,67 @@ Definition tc_exprlist {CS: compspecs} (Delta: tycontext) (t: list type) (e: lis
 Definition tc_lvalue {CS: compspecs} (Delta: tycontext) (e: expr) : environ -> mpred :=
      denote_tc_assert (typecheck_lvalue Delta e).
 
+(** The backward copy interface chooses shares and byte lists for two
+    separately owned aggregates. It requires a writable destination,
+    readable source, compatible complete types and equal object sizes.
+    After the copy, a separating implication consumes the updated pair
+    to establish [P]. The spatial separation supplies nonoverlap. *)
+Definition copy_pre {CS: compspecs} Delta e1 e2 (P: environ -> mpred) : environ -> mpred :=
+  EX (sh1 sh2: share) (old bytes: list memval),
+    !! (copy_type_compatible (typeof e1) (typeof e2) = true /\ access_mode (typeof e1) = By_copy /\
+        complete_type cenv_cs (typeof e1) = true /\
+        writable_share sh1 /\ readable_share sh2 /\
+        Zlength old = sizeof (typeof e1) /\ Zlength bytes = sizeof (typeof e1)) &&
+    |> (tc_lvalue Delta e1 && tc_lvalue Delta e2 &&
+        local (`(copy_aligned (typeof e1)) (eval_lvalue e1)) &&
+        local (`(copy_aligned (typeof e1)) (eval_lvalue e2)) &&
+        ((`(memvals_at_ptr sh1 old) (eval_lvalue e1) *
+          `(memvals_at_ptr sh2 bytes) (eval_lvalue e2)) *
+         ((`(memvals_at_ptr sh1 bytes) (eval_lvalue e1) *
+           `(memvals_at_ptr sh2 bytes) (eval_lvalue e2)) -* P))).
+
+(** Self-copy uses one writable byte span and equality of evaluated
+    lvalue addresses. Its continuation receives that same span. It does
+    not require a second, separated ownership assertion for the source. *)
+Definition selfcopy_pre {CS: compspecs} Delta e1 e2 (P: environ -> mpred) : environ -> mpred :=
+  EX (sh: share) (bytes: list memval),
+    !! (copy_type_compatible (typeof e1) (typeof e2) = true /\ access_mode (typeof e1) = By_copy /\
+        complete_type cenv_cs (typeof e1) = true /\ writable_share sh /\
+        Zlength bytes = sizeof (typeof e1)) &&
+    |> (tc_lvalue Delta e1 && tc_lvalue Delta e2 &&
+        local (`eq (eval_lvalue e1) (eval_lvalue e2)) &&
+        local (`(copy_aligned (typeof e1)) (eval_lvalue e1)) &&
+        (`(memvals_at_ptr sh bytes) (eval_lvalue e1) *
+         (`(memvals_at_ptr sh bytes) (eval_lvalue e1) -* P))).
+
+(** A bitfield store owns the complete integer carrier, including the
+    bits outside the selected field. The descriptor locates the carrier
+    and constrains the bit range. The nonvolatile target and cast value
+    must be justified before the continuation can use the carrier with
+    the selected bits replaced and the other bits retained. *)
+Definition bitfield_store_pre {CS: compspecs} Delta e1 e2
+    (P: environ -> mpred) : environ -> mpred :=
+  EX (root: expr) (field: ident) (delta: Z) (sz: intsize) (sg: signedness)
+     (pos width: Z) (attributes: attr) (sh: share) (carrier new_value: int),
+    let target_type := Tint sz
+      (if zlt width (bitsize_intsize sz) then Signed else sg) attributes in
+    !! (e1 = Efield root field target_type /\
+        bitfield_field cenv_cs (typeof root) field delta (Bits sz sg pos width) /\
+        0 <= pos /\ 0 < width <= bitsize_intsize sz /\
+        pos + width <= Cop.bitsize_carrier sz /\
+        attr_volatile attributes = false /\ writable_share sh) &&
+    |> (tc_lvalue Delta root && tc_expr Delta (Ecast e2 target_type) &&
+        local (fun rho =>
+          force_val (sem_cast (typeof e2) target_type (eval_expr e2 rho)) =
+          Vint new_value) &&
+        ((fun rho => mapsto sh (bitfield_carrier_type sz)
+            (offset_val delta (eval_lvalue root rho)) (Vint carrier)) *
+         ((fun rho => mapsto sh (bitfield_carrier_type sz)
+             (offset_val delta (eval_lvalue root rho))
+             (Val.load_result (Cop.chunk_for_carrier sz)
+               (Vint (Int.bitfield_insert (Cop.first_bit sz pos width)
+                 width carrier new_value)))) -* P))).
+
 Definition tc_expropt {CS: compspecs} Delta (e: option expr) (t: type) : environ -> mpred :=
    match e with None => `!!(t=Tvoid)
                      | Some e' => tc_expr Delta (Ecast e' t)
@@ -1681,6 +1745,73 @@ Axiom semax_store:
           (Sassign e1 e2)
           (normal_ret_assert
                (`(mapsto sh (typeof e1)) (eval_lvalue e1) (`force_val (`(sem_cast (typeof e2) (typeof e1)) (eval_expr e2))) * P)).
+
+(** Copy replaces destination bytes and preserves the source and frame.
+    Alignment is explicit for both addresses. Separating ownership
+    excludes overlapping positive-size spans. The concrete soundness
+    implementation discharges this interface rule. *)
+Axiom semax_copy:
+  forall {CS: compspecs} {Espec: OracleKind} Delta e1 e2 sh1 sh2 old bytes P,
+    copy_type_compatible (typeof e1) (typeof e2) = true ->
+    access_mode (typeof e1) = By_copy ->
+    complete_type cenv_cs (typeof e1) = true ->
+    writable_share sh1 -> readable_share sh2 ->
+    Zlength old = sizeof (typeof e1) -> Zlength bytes = sizeof (typeof e1) ->
+    @semax CS Espec Delta
+      (|> (tc_lvalue Delta e1 && tc_lvalue Delta e2 &&
+           local (`(copy_aligned (typeof e1)) (eval_lvalue e1)) &&
+           local (`(copy_aligned (typeof e1)) (eval_lvalue e2)) &&
+           ((`(memvals_at_ptr sh1 old) (eval_lvalue e1) *
+             `(memvals_at_ptr sh2 bytes) (eval_lvalue e2)) * P)))
+      (Sassign e1 e2)
+      (normal_ret_assert
+        ((`(memvals_at_ptr sh1 bytes) (eval_lvalue e1) *
+          `(memvals_at_ptr sh2 bytes) (eval_lvalue e2)) * P)).
+
+(** Equal lvalue addresses permit assignment under one writable
+    ownership assertion. The byte list and arbitrary frame are retained,
+    including when the complete aggregate has size zero. *)
+Axiom semax_selfcopy:
+  forall {CS: compspecs} {Espec: OracleKind} Delta e1 e2 sh bytes P,
+    copy_type_compatible (typeof e1) (typeof e2) = true ->
+    access_mode (typeof e1) = By_copy ->
+    complete_type cenv_cs (typeof e1) = true -> writable_share sh ->
+    Zlength bytes = sizeof (typeof e1) ->
+    @semax CS Espec Delta
+      (|> (tc_lvalue Delta e1 && tc_lvalue Delta e2 &&
+           local (`eq (eval_lvalue e1) (eval_lvalue e2)) &&
+           local (`(copy_aligned (typeof e1)) (eval_lvalue e1)) &&
+           (`(memvals_at_ptr sh bytes) (eval_lvalue e1) * P)))
+      (Sassign e1 e2)
+      (normal_ret_assert (`(memvals_at_ptr sh bytes) (eval_lvalue e1) * P)).
+
+(** Store the cast integer into a nonvolatile bitfield while preserving
+    the remainder of its carrier and the frame. The postcondition uses
+    the carrier chunk load result after bit insertion, so narrow-carrier
+    normalization is part of the guarantee. *)
+Axiom semax_store_bitfield:
+  forall {CS: compspecs} {Espec: OracleKind}
+    Delta root field rhs delta sz sg pos width attributes sh carrier new_value P,
+    bitfield_field cenv_cs (typeof root) field delta (Bits sz sg pos width) ->
+    0 <= pos -> 0 < width <= bitsize_intsize sz ->
+    pos + width <= Cop.bitsize_carrier sz ->
+    attr_volatile attributes = false -> writable_share sh ->
+    let target_type := Tint sz
+      (if zlt width (bitsize_intsize sz) then Signed else sg) attributes in
+    @semax CS Espec Delta
+      (|> (tc_lvalue Delta root && tc_expr Delta (Ecast rhs target_type) &&
+           local (fun rho =>
+             force_val (sem_cast (typeof rhs) target_type (eval_expr rhs rho)) =
+             Vint new_value) &&
+           ((fun rho => mapsto sh (bitfield_carrier_type sz)
+               (offset_val delta (eval_lvalue root rho)) (Vint carrier)) * P)))
+      (Sassign (Efield root field target_type) rhs)
+      (normal_ret_assert
+        ((fun rho => mapsto sh (bitfield_carrier_type sz)
+            (offset_val delta (eval_lvalue root rho))
+            (Val.load_result (Cop.chunk_for_carrier sz)
+              (Vint (Int.bitfield_insert (Cop.first_bit sz pos width)
+                width carrier new_value)))) * P)).
 
 Axiom semax_store_union_hack:
      forall {cs: compspecs} {Espec:OracleKind}
