@@ -535,7 +535,7 @@ FLOYD_FILES= \
    entailer.v globals_lemmas.v \
    local2ptree_denote.v local2ptree_eval.v local2ptree_typecheck.v \
    fieldlist.v mapsto_memory_block.v\
-   nested_field_lemmas.v efield_lemmas.v copy_lvalue.v copy_alignment.v copy_address.v copy_rules.v proj_reptype_lemmas.v replace_refill_reptype_lemmas.v \
+   nested_field_lemmas.v efield_lemmas.v copy_lvalue.v copy_alignment.v copy_address.v copy_rules.v copy_discovery.v copy_forward.v proj_reptype_lemmas.v replace_refill_reptype_lemmas.v \
    data_at_rec_lemmas.v field_at.v field_at_wand.v stronger.v \
    for_lemmas.v semax_tactics.v diagnosis.v simple_reify.v simpl_reptype.v \
    freezer.v deadvars.v Clightnotations.v unfold_data_at.v hints.v reassoc_seq.v \
