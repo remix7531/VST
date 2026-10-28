@@ -557,7 +557,7 @@ PROGS32_FILES= \
   even.v verif_even.v odd.v verif_odd.v verif_evenodd_spec.v  \
   merge.v verif_merge.v verif_append.v verif_append2.v bst.v bst_oo.v verif_bst.v verif_bst_oo.v \
   verif_bin_search.v verif_floyd_tests.v verif_structcopy.v structcopy_tests.v verif_structcopy_tests.v \
-  unioncopy.v verif_unioncopy.v verif_arraycopy.v \
+  verif_structcopy_bytes.v unioncopy.v verif_unioncopy.v verif_bitfield_copy.v verif_arraycopy.v \
   verif_sumarray2.v verif_switch.v verif_message.v verif_object.v \
   funcptr.v verif_funcptr.v tutorial1.v  \
   verif_int_or_ptr.v verif_union.v verif_cast_test.v verif_dotprod.v \
@@ -581,7 +581,7 @@ V64_ORDINARY = verif_reverse2.v verif_revarray.v verif_sumarray.v \
     verif_global.v verif_min.v verif_min64.v verif_nest2.v verif_nest3.v \
     verif_logical_compare.v  verif_fptr_cmp.v\
     verif_strlib.v verif_switch.v verif_union.v verif_message.v verif_incr.v \
-    verif_structcopy.v verif_structcopy_tests.v verif_unioncopy.v verif_arraycopy.v
+    verif_structcopy.v verif_structcopy_tests.v verif_structcopy_bytes.v verif_unioncopy.v verif_bitfield_copy.v verif_arraycopy.v
 
 SHA_FILES= \
   general_lemmas.v SHA256.v common_lemmas.v pure_lemmas.v sha_lemmas.v functional_prog.v \
